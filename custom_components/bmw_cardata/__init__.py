@@ -161,13 +161,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: CardataConfigEntry) -> b
             hass, stream.async_start(), "bmw_cardata_stream"
         )
 
-    # Background loops.
+    # Background loops. async_track_time_interval awaits coroutine functions
+    # itself -- do not wrap them in async_create_task.
+    async def _token_interval(_now) -> None:
+        await _async_token_tick(hass, entry, runtime, session)
+
+    async def _poll_interval(_now) -> None:
+        await _async_poll_tick(hass, entry, runtime)
+
     entry.async_on_unload(
-        async_track_time_interval(
-            hass,
-            lambda now: hass.async_create_task(_async_token_tick(hass, entry, runtime, session)),
-            timedelta(minutes=5),
-        )
+        async_track_time_interval(hass, _token_interval, timedelta(minutes=5))
     )
     poll_interval = _effective_poll_interval(entry, runtime, len(vins) or 1)
     _LOGGER.debug(
@@ -178,9 +181,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: CardataConfigEntry) -> b
     )
     entry.async_on_unload(
         async_track_time_interval(
-            hass,
-            lambda now: hass.async_create_task(_async_poll_tick(hass, entry, runtime)),
-            timedelta(seconds=poll_interval),
+            hass, _poll_interval, timedelta(seconds=poll_interval)
         )
     )
     # Kick off an initial poll shortly after startup.

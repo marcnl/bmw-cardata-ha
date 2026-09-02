@@ -89,22 +89,38 @@ class CardataStream:
             clean_session=True,
         )
         client.username_pw_set(self._gcid, self._id_token)
+        # BMW's broker expects TLS 1.2 exactly; offering 1.3 gets the connection
+        # closed right after the handshake with no CONNACK.
         context = ssl.create_default_context()
         context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.maximum_version = ssl.TLSVersion.TLSv1_2
         client.tls_set_context(context)
+        client.tls_insecure_set(False)
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_mqtt_message
+        client.on_subscribe = self._on_subscribe
+        client.enable_logger(logging.getLogger(f"{__name__}.paho"))
         client.reconnect_delay_set(min_delay=5, max_delay=120)
+        _LOGGER.debug(
+            "BMW CarData stream: connecting to %s:%s as gcid=%s (id_token len=%d)",
+            STREAM_HOST,
+            STREAM_PORT,
+            self._gcid,
+            len(self._id_token or ""),
+        )
         try:
             client.connect(STREAM_HOST, STREAM_PORT, keepalive=STREAM_KEEPALIVE)
-        except OSError as err:
+        except Exception as err:  # noqa: BLE001 - OSError, SSLError, socket.gaierror, ...
             _LOGGER.error("BMW CarData stream connect failed: %s", err)
             self._notify_status("error", str(err))
             self.hass.loop.call_soon_threadsafe(self._schedule_reconnect)
             return
         client.loop_start()
         self._client = client
+
+    def _on_subscribe(self, client, userdata, mid, reason_codes, properties=None) -> None:
+        _LOGGER.info("BMW CarData stream subscription active (mid=%s, %s)", mid, reason_codes)
 
     async def _disconnect(self) -> None:
         client = self._client

@@ -1,0 +1,23 @@
+poll_now:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: bmw_cardata
+
+refresh_tokens:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: bmw_cardata
+
+recreate_container:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: bmw_cardata

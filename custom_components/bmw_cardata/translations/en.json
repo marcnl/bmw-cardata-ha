@@ -1,0 +1,77 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Enter the CarData **Client ID** you created in the BMW CarData portal ({portal}). The client must be subscribed to both the *CarData API* and *CarData Streaming* scopes.",
+        "data": {
+          "client_id": "Client ID"
+        }
+      },
+      "authorize": {
+        "title": "Authorise Home Assistant",
+        "description": "1. Open {url}\n2. Sign in and confirm the code **{code}**\n3. Only then press **Submit** below."
+      },
+      "reauth_confirm": {
+        "title": "Re-authorise BMW CarData",
+        "description": "The stored BMW CarData tokens are no longer valid. Press **Submit** to start a new device authorisation."
+      }
+    },
+    "error": {
+      "device_code_failed": "Could not start device authorisation. Check the Client ID and that it is subscribed to the API and Streaming scopes.",
+      "authorization_failed": "Authorisation did not complete. Make sure you approved the code in the browser, then try again."
+    },
+    "abort": {
+      "already_configured": "This BMW account is already configured.",
+      "reauth_successful": "Re-authorisation successful.",
+      "wrong_account": "The authorised BMW account does not match this entry."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BMW CarData options",
+        "description": "Changing the descriptor groups rebuilds the telematics container on the next reload.",
+        "data": {
+          "descriptor_groups": "Descriptor groups to request",
+          "poll_interval": "REST poll interval (seconds)",
+          "enable_stream": "Enable MQTT streaming",
+          "enable_charging_history": "Fetch charging history daily",
+          "enable_tyre_diagnosis": "Fetch tyre diagnosis daily"
+        }
+      }
+    }
+  },
+  "services": {
+    "poll_now": {
+      "name": "Poll now",
+      "description": "Fetch telematics data from the REST API immediately (uses quota).",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integration entry",
+          "description": "Which BMW CarData account entry to use (defaults to the first)."
+        }
+      }
+    },
+    "refresh_tokens": {
+      "name": "Refresh tokens",
+      "description": "Force an OAuth token refresh.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integration entry",
+          "description": "Which BMW CarData account entry to use (defaults to the first)."
+        }
+      }
+    },
+    "recreate_container": {
+      "name": "Recreate container",
+      "description": "Delete and recreate the BMW CarData telematics container(s).",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integration entry",
+          "description": "Which BMW CarData account entry to use (defaults to the first)."
+        }
+      }
+    }
+  }
+}

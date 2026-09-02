@@ -46,6 +46,7 @@ CONF_GCID: Final = "gcid"
 CONF_TOKEN_EXPIRES_AT: Final = "token_expires_at"
 CONF_CONTAINERS: Final = "containers"
 CONF_CONTAINER_SIGNATURE: Final = "container_signature"
+CONF_BAD_DESCRIPTORS: Final = "bad_descriptors"
 CONF_VEHICLES: Final = "vehicles"
 CONF_QUOTA_LOG: Final = "quota_log"
 

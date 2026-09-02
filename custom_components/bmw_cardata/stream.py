@@ -134,13 +134,17 @@ class CardataStream:
 
     # --- paho callbacks (executor thread) --------------------------
     def _on_connect(self, client: mqtt.Client, userdata, flags, reason_code, properties=None) -> None:
-        if reason_code == 0 or getattr(reason_code, "is_failure", True) is False:
+        failed = getattr(reason_code, "is_failure", None)
+        if failed is None:
+            failed = reason_code != 0
+        if not failed:
             self._backoff = 5
-            client.subscribe(f"{self._gcid}/+")
-            _LOGGER.info("BMW CarData stream connected")
+            topic = f"{self._gcid}/+"
+            result = client.subscribe(topic)
+            _LOGGER.info("BMW CarData stream connected; subscribing to %s (%s)", topic, result)
             self._notify_status("connected", None)
         else:
-            _LOGGER.warning("BMW CarData stream refused: %s", reason_code)
+            _LOGGER.warning("BMW CarData stream connection refused: %s", reason_code)
             self._notify_status("unauthorized", str(reason_code))
             self.hass.loop.call_soon_threadsafe(self._schedule_reconnect)
 

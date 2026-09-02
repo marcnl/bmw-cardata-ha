@@ -51,6 +51,10 @@ class CardataApiClient:
         self._token_provider = token_provider
         self._quota = quota
 
+    @property
+    def quota(self) -> QuotaTracker:
+        return self._quota
+
     async def _request(
         self,
         method: str,

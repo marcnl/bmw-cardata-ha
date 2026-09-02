@@ -70,11 +70,24 @@ GROUP_LABELS: dict[str, str] = {
 ALWAYS_INCLUDE: set[str] = {
     "vehicle.vehicle.travelledDistance",
     "vehicle.sim.status",
-    "vehicle.vehicleIdentification.basicVehicleData",
+}
+
+# Descriptors present in the compiled catalogue CSV that BMW's container API
+# rejects (CU-402) -- typos in the source list, or keys that only exist via a
+# dedicated endpoint. Excluded up front so we do not waste quota probing them.
+# The integration also learns and persists further bad keys at runtime.
+KNOWN_BAD: set[str] = {
+    "vehicle.sevice.preferredSevicePartner",  # BMW's own catalogue typo
+    "vehicle.serviceDemand.defect.id",
+    "vehicle.look.image",  # dedicated endpoint only
+    "vehicle.vehicleIdentification.basicVehicleData",  # BASIC_DATA / dedicated
+    "vehicle.chassis.axle.wheel.tire.diagnosis",  # dedicated endpoint only
+    "vehicle.powertrain.electric.battery.charging.history.sessionsList",  # dedicated
+    "vehicle.powertrain.electric.battery.charging.settingsList",  # dedicated
 }
 
 
-def resolve_descriptors(groups: list[str]) -> list[str]:
+def resolve_descriptors(groups: list[str], *, exclude: set[str] | None = None) -> list[str]:
     """Return the sorted descriptor set for the selected groups."""
     if "all" in groups:
         selected = set(DESCRIPTORS)
@@ -88,6 +101,9 @@ def resolve_descriptors(groups: list[str]) -> list[str]:
             if meta.get("category") in wanted_categories
         }
     selected |= ALWAYS_INCLUDE
+    selected -= KNOWN_BAD
+    if exclude:
+        selected -= exclude
     return sorted(selected)
 
 

@@ -21,7 +21,7 @@ from .catalogue import OVERRIDES, normalise_unit
 from .const import LOCATION_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .descriptors import DESCRIPTORS
-from .entity import CardataDescriptorEntity
+from .entity import CardataDescriptorEntity, restore_registered_descriptors
 
 _NUMERIC_TYPES = {"int32", "uint16", "uint32", "int16", "uint8", "float", "double", "int"}
 

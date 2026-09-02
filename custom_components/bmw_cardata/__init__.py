@@ -23,6 +23,7 @@ from .auth import (
 )
 from .catalogue import resolve_descriptors
 from .const import (
+    CONF_BAD_DESCRIPTORS,
     CONF_CLIENT_ID,
     CONF_CONTAINER_SIGNATURE,
     CONF_CONTAINERS,
@@ -58,8 +59,11 @@ class CardataRuntime:
     api: CardataApiClient | None = None
     stream: CardataStream | None = None
     container_ids: list[str] = field(default_factory=list)
+    bad_descriptors: set[str] = field(default_factory=set)
+    last_options: dict = field(default_factory=dict)
     _token_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _last_refresh_attempt: float = 0.0
+    _last_quota_persist: float = 0.0
     _daily_fetch_done: dict[str, float] = field(default_factory=dict)
 
 
@@ -101,33 +105,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: CardataConfigEntry) -> b
 
     vins = [m["vin"] for m in mappings if isinstance(m, dict) and m.get("vin")]
     coordinator.set_allowed_vins(set(vins))
-    if vins:
-        hass.config_entries.async_update_entry(
-            entry, data={**entry.data, CONF_VEHICLES: vins}
-        )
 
-    # Reconcile the telematics container(s).
+    # Reconcile the telematics container(s). All persistence to entry.data is
+    # batched into a single guarded write below so it cannot loop the update
+    # listener.
+    runtime.bad_descriptors = set(entry.data.get(CONF_BAD_DESCRIPTORS, []))
     groups = entry.options.get(OPT_DESCRIPTOR_GROUPS, DEFAULT_DESCRIPTOR_GROUPS)
-    desired = resolve_descriptors(groups)
+    desired = resolve_descriptors(groups, exclude=runtime.bad_descriptors)
+    new_data: dict = {}
+    if vins:
+        new_data[CONF_VEHICLES] = vins
     try:
-        container_ids, signature = await async_reconcile_containers(
+        container_ids, signature, discovered_bad = await async_reconcile_containers(
             runtime.api,
             desired=desired,
             known_ids=entry.data.get(CONF_CONTAINERS, []),
             known_signature=entry.data.get(CONF_CONTAINER_SIGNATURE),
         )
         runtime.container_ids = container_ids
-        hass.config_entries.async_update_entry(
-            entry,
-            data={
-                **entry.data,
-                CONF_CONTAINERS: container_ids,
-                CONF_CONTAINER_SIGNATURE: signature,
-            },
-        )
+        if discovered_bad:
+            runtime.bad_descriptors |= discovered_bad
+            new_data[CONF_BAD_DESCRIPTORS] = sorted(runtime.bad_descriptors)
+            _LOGGER.warning(
+                "BMW rejected %d descriptor(s) as invalid; excluded going forward: %s",
+                len(discovered_bad),
+                ", ".join(sorted(discovered_bad)),
+            )
+        new_data[CONF_CONTAINERS] = container_ids
+        new_data[CONF_CONTAINER_SIGNATURE] = signature
     except Exception as err:  # noqa: BLE001 - keep the entry usable (stream still works)
         _LOGGER.error("Container reconciliation failed, REST polling disabled: %s", err)
         runtime.container_ids = entry.data.get(CONF_CONTAINERS, [])
+
+    new_data[CONF_QUOTA_LOG] = runtime.quota.dump()
+    _persist(hass, entry, new_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -177,7 +188,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: CardataConfigEntry) -> b
         hass, _async_poll_tick(hass, entry, runtime, initial=True), "bmw_cardata_poll_initial"
     )
 
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    runtime.last_options = dict(entry.options)
+    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
     await _async_register_services(hass)
     return True
 
@@ -186,12 +198,38 @@ async def async_unload_entry(hass: HomeAssistant, entry: CardataConfigEntry) -> 
     runtime: CardataRuntime = entry.runtime_data
     if runtime.stream:
         await runtime.stream.async_stop()
-    _persist_quota(hass, entry, runtime)
+    _persist_quota(hass, entry, runtime, force=True)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-async def _async_options_updated(hass: HomeAssistant, entry: CardataConfigEntry) -> None:
+async def _async_entry_updated(hass: HomeAssistant, entry: CardataConfigEntry) -> None:
+    """Reload only when the *options* changed, never for internal data writes."""
+    runtime: CardataRuntime | None = getattr(entry, "runtime_data", None)
+    if runtime is not None and runtime.last_options == dict(entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _persist_quota(
+    hass: HomeAssistant, entry: CardataConfigEntry, runtime: CardataRuntime, *, force: bool = False
+) -> None:
+    """Persist the quota log at most every 5 minutes (or on force, e.g. unload)."""
+    now = time.time()
+    if not force and now - runtime._last_quota_persist < 300:
+        return
+    runtime._last_quota_persist = now
+    _persist(hass, entry, {CONF_QUOTA_LOG: runtime.quota.dump()})
+
+
+def _persist(hass: HomeAssistant, entry: CardataConfigEntry, changes: dict) -> None:
+    """Write ``changes`` into entry.data, but only the keys that actually differ.
+
+    A no-op write still fires update listeners, so skipping them is what keeps
+    setup from reload-looping.
+    """
+    delta = {k: v for k, v in changes.items() if entry.data.get(k) != v}
+    if delta:
+        hass.config_entries.async_update_entry(entry, data={**entry.data, **delta})
 
 
 def _effective_poll_interval(
@@ -282,7 +320,7 @@ async def _async_poll_tick(
             runtime.coordinator.async_ingest({"vin": vin, "data": merged}, source="poll")
             any_data = True
     if any_data:
-        _persist_quota(hass, entry, runtime)
+        _persist_quota(hass, entry, runtime, force=True)
 
 
 async def _async_fetch_basic_data(hass, entry, runtime: CardataRuntime, vins: list[str]) -> None:
@@ -305,13 +343,7 @@ async def _async_fetch_basic_data(hass, entry, runtime: CardataRuntime, vins: li
                 "raw": data,
             },
         )
-    _persist_quota(hass, entry, runtime)
-
-
-def _persist_quota(hass: HomeAssistant, entry: CardataConfigEntry, runtime: CardataRuntime) -> None:
-    hass.config_entries.async_update_entry(
-        entry, data={**entry.data, CONF_QUOTA_LOG: runtime.quota.dump()}
-    )
+    _persist_quota(hass, entry, runtime, force=True)
 
 
 # --- services ------------------------------------------------------
@@ -340,16 +372,22 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             return
         runtime: CardataRuntime = entry.runtime_data
         groups = entry.options.get(OPT_DESCRIPTOR_GROUPS, DEFAULT_DESCRIPTOR_GROUPS)
-        ids, signature = await async_reconcile_containers(
+        ids, signature, discovered_bad = await async_reconcile_containers(
             runtime.api,
-            desired=resolve_descriptors(groups),
+            desired=resolve_descriptors(groups, exclude=runtime.bad_descriptors),
             known_ids=[],
             known_signature=None,
         )
         runtime.container_ids = ids
-        hass.config_entries.async_update_entry(
+        runtime.bad_descriptors |= discovered_bad
+        _persist(
+            hass,
             entry,
-            data={**entry.data, CONF_CONTAINERS: ids, CONF_CONTAINER_SIGNATURE: signature},
+            {
+                CONF_CONTAINERS: ids,
+                CONF_CONTAINER_SIGNATURE: signature,
+                CONF_BAD_DESCRIPTORS: sorted(runtime.bad_descriptors),
+            },
         )
 
     hass.services.async_register(DOMAIN, "poll_now", _poll_now)

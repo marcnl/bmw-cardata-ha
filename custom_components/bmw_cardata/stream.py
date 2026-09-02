@@ -89,13 +89,10 @@ class CardataStream:
             clean_session=True,
         )
         client.username_pw_set(self._gcid, self._id_token)
-        # BMW's broker expects TLS 1.2 exactly; offering 1.3 gets the connection
-        # closed right after the handshake with no CONNACK.
+        # BMW's broker (Kong gateway) negotiates TLS 1.3; a plain default context
+        # is what works. A raw MQTT CONNECT to this endpoint returns CONNACK rc=0.
         context = ssl.create_default_context()
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.maximum_version = ssl.TLSVersion.TLSv1_2
         client.tls_set_context(context)
-        client.tls_insecure_set(False)
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_mqtt_message
